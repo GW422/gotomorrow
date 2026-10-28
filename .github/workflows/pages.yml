@@ -1,0 +1,90 @@
+
+name: 部署去明日正式网站
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: 获取仓库文件
+        uses: actions/checkout@v4
+
+      - name: 解压网站运行包
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          zip_files = sorted(Path(".").glob("*.zip"))
+
+          if len(zip_files) != 1:
+              raise SystemExit(
+                  "请在仓库根目录保留且只保留一个 ZIP 运行包"
+              )
+
+          zip_path = zip_files[0]
+          print("正在部署:", zip_path.name)
+
+          with zipfile.ZipFile(zip_path) as z:
+              bad_file = z.testzip()
+
+              if bad_file:
+                  raise SystemExit(
+                      f"ZIP 文件损坏: {bad_file}"
+                  )
+
+              if "index.html" not in z.namelist():
+                  raise SystemExit(
+                      "ZIP 根目录必须包含 index.html"
+                  )
+
+              for member in z.infolist():
+                  target = Path("site", member.filename).resolve()
+                  root = Path("site").resolve()
+
+                  if not target.is_relative_to(root):
+                      raise SystemExit(
+                          "ZIP 包含不安全的文件路径"
+                      )
+
+              z.extractall("site")
+
+          Path("site/.nojekyll").touch()
+
+          print("网站运行包解压完成")
+
+          PY
+
+      - name: 配置 GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传网站文件
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 发布去明日正式网站
+        id: deployment
+        uses: actions/deploy-pages@v4
